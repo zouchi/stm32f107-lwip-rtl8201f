@@ -1,0 +1,389 @@
+sys_arch interface for lwIP 0.6++
+
+//LWip 0.6以上版本的sys_arch接口
+
+Author: Adam Dunkels
+
+//作者：Adam Dunkels
+
+The operating system emulation layer provides a common interface
+between the lwIP code and the underlying operating system kernel. The
+general idea is that porting lwIP to new architectures requires only
+small changes to a few header files and a new sys_arch
+implementation. It is also possible to do a sys_arch implementation
+that does not rely on any underlying operating system.
+
+//操作系统仿真层为LWIP的代码和底层操作系统之间提供了一个通用的接口。
+//总的思路是，将LWIP的移植到新的架构时只需要一些微小的变化，包括实现以几个头文件和一个sys_arch源文件
+//也可以实现一个不依赖于操作系统的sys_arch源文件
+
+
+The sys_arch provides semaphores and mailboxes to lwIP. For the full
+lwIP functionality, multiple threads support can be implemented in the
+sys_arch, but this is not required for the basic lwIP
+functionality. Previous versions of lwIP required the sys_arch to
+implement timer scheduling as well but as of lwIP 0.5 this is
+implemented in a higher layer.
+
+//sys_arch提供信号量和邮箱。对于全功能的LWip，多线程的支持可以在sys_arch中实现，但是这不是必需的。
+//以前的版本的lwIP所需要的sys_arch实现定时调度，但是LWIP0.5以后，这在更高层来实现。
+
+In addition to the source file providing the functionality of sys_arch,
+the OS emulation layer must provide several header files defining
+macros used throughout lwip.  The files required and the macros they
+must define are listed below the sys_arch description.
+
+//除了sys_arch源文件提供的几个功能外，还必须提供几个头文件，定义了几个用于整个LWIP的宏
+//下文会详细描述头文件的实现
+
+Semaphores can be either counting or binary - lwIP works with both
+kinds. Mailboxes are used for message passing and can be implemented
+either as a queue which allows multiple messages to be posted to a
+mailbox, or as a rendez-vous point where only one message can be
+posted at a time. lwIP works with both kinds, but the former type will
+be more efficient. A message in a mailbox is just a pointer, nothing
+more. 
+
+//信号量可以是计数型或二进制型，LWIP都可以正常工作。
+//邮箱用于消息传递，可以将其实现为一个队列，允许多个
+//消息被投递到一个邮箱，也可以每次只能投递一个消息，
+//lwIP都可以正常工作，但前者更有效。邮箱中的消息只能是一个指针。
+
+
+Semaphores are represented by the type "sys_sem_t" which is typedef'd
+in the sys_arch.h file. Mailboxes are equivalently represented by the
+type "sys_mbox_t". lwIP does not place any restrictions on how
+sys_sem_t or sys_mbox_t are represented internally.
+
+//在sys_arch.h文件中，信号量由“sys_sem_t”表示，“sys_mbox_t”表示邮箱
+//sys_sem_t和sys_mbox_t由何种类型表示LWip没有限制
+
+Since lwIP 1.4.0, semaphore and mailbox functions are prototyped in a way that
+allows both using pointers or actual OS structures to be used. This way, memory
+required for such types can be either allocated in place (globally or on the
+stack) or on the heap (allocated internally in the "*_new()" functions).
+
+//自从LWIP的1.4.0以来，信号量和邮箱功能，允许使用指针或实际的操作系统的结构。
+通过这种方式，存储器需要为这种类型分配空间，全局或是堆、栈 。
+
+The following functions must be implemented by the sys_arch:
+
+//以下函数必须在sys_arch中实现：
+
+- void sys_init(void)
+
+  Is called to initialize the sys_arch layer.
+//初始化sys_arch层
+
+- err_t sys_sem_new(sys_sem_t *sem, u8_t count)
+
+  Creates a new semaphore. The semaphore is allocated to the memory that 'sem'
+  points to (which can be both a pointer or the actual OS structure).
+  The "count" argument specifies the initial state of the semaphore (which is
+  either 0 or 1).
+  If the semaphore has been created, ERR_OK should be returned. Returning any
+  other error will provide a hint what went wrong, but except for assertions,
+  no real error handling is implemented.
+
+//创建一个新的信号。该信号被分配到内存“SEM”
+//可以是指针或实际的操作系统结构。
+//"count"参数指定信号量的初始状态（0或是1）
+//如果信号量已经创建，应返回ERR_OK。返回任何
+//其他错误会提供一个标志表示错误，但没有进行错误处理
+
+
+- void sys_sem_free(sys_sem_t *sem)
+
+  Deallocates a semaphore.
+//释放写信号量
+
+- void sys_sem_signal(sys_sem_t *sem)
+
+  Signals a semaphore.
+//发送一个信号量
+
+- u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout)
+
+  Blocks the thread while waiting for the semaphore to be
+  signaled. If the "timeout" argument is non-zero, the thread should
+  only be blocked for the specified time (measured in
+  milliseconds). If the "timeout" argument is zero, the thread should be
+  blocked until the semaphore is signalled.
+//阻塞线程等待指定的信号量。如果timeout参数不为0，线程被阻塞到指定的时间。
+//如果timeout参数为0，线程被阻塞到接收到信号量。
+
+  If the timeout argument is non-zero, the return value is the number of
+  milliseconds spent waiting for the semaphore to be signaled. If the
+  semaphore wasn't signaled within the specified time, the return value is
+  SYS_ARCH_TIMEOUT. If the thread didn't have to wait for the semaphore
+  (i.e., it was already signaled), the function may return zero.
+//如果timeout参数不为0，返回值是等待信号量所花费的毫米数。如果
+//未在规定时间内接受到信号量，返回值是SYS_ARCH_TIMEOUT。
+//如果线程不必再等待信号（已收到信号量），返回值可为0。
+
+  Notice that lwIP implements a function with a similar name,
+  sys_sem_wait(), that uses the sys_arch_sem_wait() function.
+//请注意，LWIP实现了一个名称与其相似的函数sys_sem_wait（）
+//来调用sys_arch_sem_wait（）函数
+
+
+- int sys_sem_valid(sys_sem_t *sem)
+
+  Returns 1 if the semaphore is valid, 0 if it is not valid.
+  When using pointers, a simple way is to check the pointer for != NULL.
+  When directly using OS structures, implementing this may be more complex.
+  This may also be a define, in which case the function is not prototyped.
+//查询一个信号量是否有效，返回1有效，0无效。
+//当使用指针时，一个简单的方法是检查指针是不是等于 NULL。
+//当直接使用OS的结构，可能会更复杂。
+//这也可能是一个意义上的说法，在这种情况下函数不是原型。
+
+
+- void sys_sem_set_invalid(sys_sem_t *sem)
+
+  Invalidate a semaphore so that sys_sem_valid() returns 0.
+  ATTENTION: This does NOT mean that the semaphore shall be deallocated:
+  sys_sem_free() is always called before calling this function!
+  This may also be a define, in which case the function is not prototyped.
+//设置一个信号量为无效，函数返回0
+//注意：这并不意味着该信号量被释放：
+//sys_sem_free（）函数总是在调用 sys_sem_set_invalid（）函数之前调用
+//这也可能是一个意义上的说法，在这种情况下函数不是原型。
+
+- err_t sys_mbox_new(sys_mbox_t *mbox, int size)
+
+  Creates an empty mailbox for maximum "size" elements. Elements stored
+  in mailboxes are pointers. You have to define macros "_MBOX_SIZE"
+  in your lwipopts.h, or ignore this parameter in your implementation
+  and use a default size.
+  If the mailbox has been created, ERR_OK should be returned. Returning any
+  other error will provide a hint what went wrong, but except for assertions,
+  no real error handling is implemented.
+//建立一个空邮箱，邮箱大小以最大尺寸成员为准。
+//邮箱中的消息都是指针。你须要在您的lwipopts.h中定义宏“_MBOX_SIZE”
+//或者忽略此参数，使用默认值
+//如果邮箱已经创建，应返回ERR_OK。返回任何
+//其他错误会提供一个标志表示错误，但没有进行错误处理
+
+
+- void sys_mbox_free(sys_mbox_t *mbox)
+
+  Deallocates a mailbox. If there are messages still present in the
+  mailbox when the mailbox is deallocated, it is an indication of a
+  programming error in lwIP and the developer should be notified.
+//释放一个邮箱。如果释放邮箱时，其中还有消息，表面这是一个编程错误，应通知LWip的开发者
+
+- void sys_mbox_post(sys_mbox_t *mbox, void *msg)
+
+  Posts the "msg" to the mailbox. This function have to block until
+  the "msg" is really posted.
+//投递一个消息到邮箱，这个函数会阻塞到消息成功被投递
+
+- err_t sys_mbox_trypost(sys_mbox_t *mbox, void *msg)
+
+  Try to post the "msg" to the mailbox. Returns ERR_MEM if this one
+  is full, else, ERR_OK if the "msg" is posted.
+//尝试投递消息，不阻塞。成功返回ERR_OK，邮箱满，投递失败返回ERR_MEM
+
+- u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout)
+
+  Blocks the thread until a message arrives in the mailbox, but does
+  not block the thread longer than "timeout" milliseconds (similar to
+  the sys_arch_sem_wait() function). If "timeout" is 0, the thread should
+  be blocked until a message arrives. The "msg" argument is a result
+  parameter that is set by the function (i.e., by doing "*msg =
+  ptr"). The "msg" parameter maybe NULL to indicate that the message
+  should be dropped.
+//阻塞线程直到邮箱收到消息，阻塞超时时间由"timeout"参数指定(类似于sys_arch_sem_wait()函数)。
+//如果"timeout"参数等于0，会阻塞至消息到达。"msg"是一个结果参数取决于函数的设置(即*msg =ptr")
+// "msg"可能为空，表示该消息应该被丢弃。
+
+  The return values are the same as for the sys_arch_sem_wait() function:
+  Number of milliseconds spent waiting or SYS_ARCH_TIMEOUT if there was a
+  timeout.
+//返回值与sys_arch_sem_wait()函数相同
+//返回等待的毫秒数或者为SYS_ARCH_TIMEOUT――如果时间溢出的话
+
+  Note that a function with a similar name, sys_mbox_fetch(), is
+  implemented by lwIP. 
+//LwIP的函数中，有一个名称与之相似的――sys_mbox_fetch()，注意区分。
+
+- u32_t sys_arch_mbox_tryfetch(sys_mbox_t *mbox, void **msg)
+
+  This is similar to sys_arch_mbox_fetch, however if a message is not
+  present in the mailbox, it immediately returns with the code
+  SYS_MBOX_EMPTY. On success 0 is returned.
+//尝试获取消息，不阻塞，类似于sys_arch_mbox_fetch,如果消息不存在，返回SYS_MBOX_EMPTY.
+//成功获取返回0
+  
+  To allow for efficient implementations, this can be defined as a
+  function-like macro in sys_arch.h instead of a normal function. For
+  example, a naive implementation could be:
+    #define sys_arch_mbox_tryfetch(mbox,msg) \
+      sys_arch_mbox_fetch(mbox,msg,1)
+  although this would introduce unnecessary delays.
+//为了更高效的实现该函数，可以在sys_arch.h中定义为一个函数宏以代替正常功能。
+//例如，一个天真的实现可能是：
+    #define sys_arch_mbox_tryfetch(mbox,msg) \
+      sys_arch_mbox_fetch(mbox,msg,1)
+//虽然这会带来不必要的延误。
+
+
+- int sys_mbox_valid(sys_mbox_t *mbox)
+
+  Returns 1 if the mailbox is valid, 0 if it is not valid.
+  When using pointers, a simple way is to check the pointer for != NULL.
+  When directly using OS structures, implementing this may be more complex.
+  This may also be a define, in which case the function is not prototyped.
+//查询一个邮箱是否有效，返回1有效，0无效。
+//当使用指针时，一个简单的方法是检查指针是不是等于 NULL。
+//当直接使用OS的结构，可能会更复杂。
+//这也可能是一个意义上的说法，在这种情况下函数不是原型。
+
+- void sys_mbox_set_invalid(sys_mbox_t *mbox)
+
+  Invalidate a mailbox so that sys_mbox_valid() returns 0.
+  ATTENTION: This does NOT mean that the mailbox shall be deallocated:
+  sys_mbox_free() is always called before calling this function!
+  This may also be a define, in which case the function is not prototyped.
+//设置一个邮箱为无效，函数返回0
+//注意：这并不意味着该邮箱被释放：
+//sys_mbox_free()函数总是在调用 sys_sem_set_invalid（）函数之前调用
+//这也可能是一个意义上的说法，在这种情况下函数不是原型。
+
+If threads are supported by the underlying operating system and if
+such functionality is needed in lwIP, the following function will have
+to be implemented as well:
+//如果线程由底层操作系统支持，而且这种功能需要在lwIP中实现，下面的函数将要同时实现：
+
+- sys_thread_t sys_thread_new(char *name, void (* thread)(void *arg), void *arg, int stacksize, int prio)
+
+  Starts a new thread named "name" with priority "prio" that will begin its
+  execution in the function "thread()". The "arg" argument will be passed as an
+  argument to the thread() function. The stack size to used for this thread is
+  the "stacksize" parameter. The id of the new thread is returned. Both the id
+  and the priority are system dependent.
+//创建一个“name”名字的线程，优先级是"prio"，在"thread()"函数中开始实现。"arg"作为一个参数传递给 thread()函数
+//用于该线程的堆栈大小有"stacksize"参数决定。
+//返回值是该线程的id
+//不论是id还是优先级依系统而定
+
+- sys_prot_t sys_arch_protect(void)
+
+  This optional function does a "fast" critical region protection and returns
+  the previous protection level. This function is only called during very short
+  critical regions. An embedded system which supports ISR-based drivers might
+  want to implement this function by disabling interrupts. Task-based systems
+  might want to implement this by using a mutex or disabling tasking. This
+  function should support recursive calls from the same task or interrupt. In
+  other words, sys_arch_protect() could be called while already protected. In
+  that case the return value indicates that it is already protected.
+//这是一个可选函数，它负责完成临界区域保护并返回先前的保护状态。
+//该函数只有在小的临界区域需要保护时才会被调用。基于ISR驱动的嵌入
+//式系统可以通过禁止中断来实现这个函数。基于任务的系统可以通过互斥量
+//或禁止任务来实现这个函数。该函数应该支持来自于同一个任务或中断的递归调用
+//。换句话说，当该区域已经被保护，sys_arch_protect()函数依然能被调用。
+//这时，函数的返回值会通知调用者该区域已经被保护。 如果你的移植正在支持
+//一个操作系统，sys_arch_protect()函数仅仅是一个需要。
+
+  sys_arch_protect() is only required if your port is supporting an operating
+  system.
+//sys_arch_protect()只有在操作系统下才被需要
+
+- void sys_arch_unprotect(sys_prot_t pval)
+
+  This optional function does a "fast" set of critical region protection to the
+  value specified by pval. See the documentation for sys_arch_protect() for
+  more information. This function is only required if your port is supporting
+  an operating system.
+//该函数同样是一个可选函数。它的功能就是恢复受保护区域的先前保护状态，先前是受到
+//保护还是没有受到保护由参数pval指定。它与sys_arch_protect()函数配套使用，详细
+//信息参看sys_arch_protect()函数
+
+For some configurations, you also need:
+//对于某些配置，你还需要：
+
+- u32_t sys_now(void)
+
+  This optional function returns the current time in milliseconds (don't care
+  for wraparound, this is only used for time diffs).
+  Not implementing this function means you cannot use some modules (e.g. TCP
+  timestamps, internal timeouts for NO_SYS==1).
+//这个可选函数返回当前的时间以毫秒为单位（不用关心为回绕，这仅用于时间差）。
+//不使用这个函数意味着您不能使用某些模块（如TCP时间戳，内部超时for NO_SYS== 1）。
+
+Note:
+
+Be carefull with using mem_malloc() in sys_arch. When malloc() refers to
+mem_malloc() you can run into a circular function call problem. In mem.c
+mem_init() tries to allcate a semaphore using mem_malloc, which of course
+can't be performed when sys_arch uses mem_malloc.
+//要小心的使用mem_malloc（）函数。当malloc（）指的是
+mem_malloc（）函数时，您会碰到一个“循环函数调用“的问题。在mem.c 的
+mem_init（）中试图使用mem_malloc分配一个信号量时，mem_malloc不能被执行。
+
+-------------------------------------------------------------------------------
+Additional files required for the "OS support" emulation layer:
+//头文件说明
+-------------------------------------------------------------------------------
+
+cc.h       - Architecture environment, some compiler specific, some
+             environment specific (probably should move env stuff 
+             to sys_arch.h.)
+// CC.h   与硬件平台及编译器相关的环境变量及数据类型声明文件（一些或许应该移到sys_arch.h文件）。
+
+  Typedefs for the types used by lwip -
+    u8_t, s8_t, u16_t, s16_t, u32_t, s32_t, mem_ptr_t
+
+//LwIP使用的数据类型定义――u8_t, s8_t, u16_t，s16_t，u32_t，s32_t，mem_ptr_t。
+
+  Compiler hints for packing lwip's structures -
+    PACK_STRUCT_FIELD(x)
+    PACK_STRUCT_STRUCT
+    PACK_STRUCT_BEGIN
+    PACK_STRUCT_END
+
+//与编译器相关的LwIP结构体宏
+
+  Platform specific diagnostic output -	//  与平台相关的调试输
+    LWIP_PLATFORM_DIAG(x)    - non-fatal, print a message.  // 非故障，输出一条提示信息
+    LWIP_PLATFORM_ASSERT(x)  - fatal, print message and abandon execution. //故障，输出一条故障信息并放弃执行。
+    Portability defines for printf formatters://使用 printf调试时用到的一些类型
+    U16_F, S16_F, X16_F, U32_F, S32_F, X32_F, SZT_F
+
+  "lightweight" synchronization mechanisms -  //“轻量级”的同步机制 
+    SYS_ARCH_DECL_PROTECT(x) - declare a protection state variable.	//声明一个保护状态变量
+    SYS_ARCH_PROTECT(x)      - enter protection mode. //进入保护模式
+    SYS_ARCH_UNPROTECT(x)    - leave protection mode. //离开保护模式
+
+  If the compiler does not provide memset() this file must include a
+  definition of it, or include a file which defines it.
+
+//如果编译器不提供memset的函数，该文件必须包含其定义，或包括一个定义他的文件。
+
+  This file must either include a system-local <errno.h> which defines
+  the standard *nix error codes, or it should #define LWIP_PROVIDE_ERRNO
+  to make lwip/arch.h define the codes which are used throughout.
+
+//这个文件要么包含一个本地系统（system-local）提供的头文件<errno.h>
+//这个文件定义了标准的*nix错误编码，要么增加一条宏定义语句：
+//#define LWIP_PROVIDE_ERRNO，这将使得lwip/arch.h头文件来定义这些编码。
+//这些编码被用于LwIP的各个部分。
+
+
+perf.h     - Architecture specific performance measurement.
+  Measurement calls made throughout lwip, these can be defined to nothing.
+//定义了系统测量和统计相关的宏，可以定义为空。
+    PERF_START               - start measuring something.	   //开始测量
+    PERF_STOP(x)             - stop measuring something, and record the result.	//结束测量，并记录
+
+sys_arch.h - Tied to sys_arch.c	 //sys_arch.c的头文件
+
+  Arch dependent types for the following objects: //Arch需要的数据类型
+    sys_sem_t, sys_mbox_t, sys_thread_t,
+  And, optionally://可选类型
+    sys_prot_t
+
+  Defines to set vars of sys_mbox_t and sys_sem_t to NULL.  //sys_mbox_t和sys_sem_t变量的NULL值定义：
+    SYS_MBOX_NULL NULL
+    SYS_SEM_NULL NULL

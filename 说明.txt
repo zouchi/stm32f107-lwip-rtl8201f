@@ -1,0 +1,168 @@
+
+网口变压器我使用TRC1102NL。
+MRII_INT中断并不是必须的，反正都没用到
+最重要一点就是RTL8201F有50M时钟输出，PA8的时钟就不要配置了，否则网卡芯片发热和不稳定
+CPU的时钟再也不用为边个50M时钟去降频使用了
+软件部份，主要是初始化部份。
+
+#define PHY_BCR          0          /*!< Tranceiver Basic Control Register */
+#define PHY_BSR          1          /*!< Tranceiver Basic Status Register */
+#define PHY_ID1          2
+#define PHY_ID2          3
+#define PHY_ADDRESS      0x00       //RTL8201F地址，根据核心板硬件连接决定
+#define RMII_MODE                   //配置网卡接口为RMII
+#define ANLPAR         5          //这个才是协商寄存器
+
+还有一个重要的寄存器是16，配置RTL8201F输出50M时钟
+RTL8201F初始化
+
+ if(!(ETH_WritePHYRegister(PHYAddress, PHY_BCR, PHY_Reset)))
+  {
+    /* Return ERROR in case of write timeout */
+    return ETH_ERROR;
+  }
+ 
+  /* Delay to assure PHY reset */
+  _eth_delay_(PHY_ResetDelay);
+ 
+  if(ETH_InitStruct->ETH_AutoNegotiation == ETH_AutoNegotiation_Enable)
+  {  
+    /* We wait for linked satus... */
+    ETH_WritePHYRegister(PHYAddress, 16, 0x031B);        //RMII  50M输出模式，CRS_DV
+    do
+    {
+      timeout++;
+    } while (!(ETH_ReadPHYRegister(PHYAddress, PHY_BSR) & PHY_Linked_Status) && (timeout < PHY_READ_TO));
+    /* Return ERROR in case of timeout */
+    if(timeout == PHY_READ_TO)
+    {
+      return ETH_ERROR;
+    }
+    /* Reset Timeout counter */
+    timeout = 0;
+    
+    /* 启用自动协商 */
+    if(!(ETH_WritePHYRegister(PHYAddress, PHY_BCR, PHY_AutoNegotiation)))
+    {
+      /* Return ERROR in case of write timeout */
+      return ETH_ERROR;
+    }
+    
+    /* 等到自动协商完成 */
+    do
+    {
+      timeout++;
+    } while (!(ETH_ReadPHYRegister(PHYAddress, PHY_BSR) & PHY_AutoNego_Complete) && (timeout < (uint32_t)PHY_READ_TO));  
+    /* Return ERROR in case of timeout */
+    if(timeout == PHY_READ_TO)
+    {
+      return ETH_ERROR;
+    }
+    /* Reset Timeout counter */
+    timeout = 0;
+    
+    /* 阅读自动协商的结果 */
+//    RegValue = ETH_ReadPHYRegister(PHYAddress, PHY_SR);
+      RegValue = ETH_ReadPHYRegister(PHYAddress, ANLPAR);
+    /* 使用由自动协商过程修复的双工模式配置MAC*/
+    if((RegValue & PHY_ANLPAR_100TXFD)||(RegValue & PHY_ANLPAR_10TXFD))
+    {
+      /* 自动协商后将以太网双工模式设置为FullDuplex */
+      ETH_InitStruct->ETH_Mode = ETH_Mode_FullDuplex;       
+    }
+    else
+    {
+      /* 自动协商后将以太网双工模式设置为HalfDuplex */
+      ETH_InitStruct->ETH_Mode = ETH_Mode_HalfDuplex;           
+    }
+    /* 使用自动协商过程确定的速度配置MAC */
+    if((RegValue & PHY_ANLPAR_100TX)||(RegValue & PHY_ANLPAR_100TXFD))
+    {  
+      /* 自动协商后将以太网速度设置为100M */    
+       ETH_InitStruct->ETH_Speed = ETH_Speed_100M;
+    }
+    else
+    {   
+      /* 自动协商后将以太网速度设置为10M */
+      ETH_InitStruct->ETH_Speed = ETH_Speed_10M;        
+    }    
+  }
+
+还有一个就是断线重连和没有网线的时候重启
+
+/*******************************
+函数功能：断线重连
+********************************/
+void Eth_Link_ITHandler(void)
+{
+/* Check whether the link interrupt has occurred or not */
+
+   // if(((ETH_ReadPHYRegister(PHY_ADDRESS, PHY_BSR)) & PHY_BSR) != 0){/*检测插拔中断*/
+    if((ETH_ReadPHYRegister(PHY_ADDRESS, PHY_BSR) & PHY_Linked_Status) == 0x00){
+        uint16_t status = ETH_ReadPHYRegister(PHY_ADDRESS, PHY_BSR);
+        if(status & (PHY_AutoNego_Complete | PHY_Linked_Status)){/*检测到网线连接*/
+            if(EthInitStatus != 1){/*if(EthInitStatus != ETH_SUCCESS)之前未成功初始化过*/
+                /*Reinit PHY*/
+                ETH_Reinit();
+            }
+            else{/*之前已经成功初始化*/
+                /*set link up for re link callbalk function*/
+                netif_set_link_up(&netif);
+            }
+        }
+        else{/*网线断开*/\
+            /*设置链接以重新链接callbalk功能*/
+            netif_set_link_down(&netif);
+        }
+        IGMP_UP_Time = 0;  //掉线标志位
+    }
+}
+
+
+查询放在这里了
+
+//LWIP周期性任务
+void lwip_periodic_handle()
+{
+#if LWIP_TCP
+    //每250ms调用一次tcp_tmr()函数
+  if (LWipTime - TCPTimer >= 250)
+  {
+    TCPTimer =  LWipTime;
+    tcp_tmr();
+  }
+   #if LWIP_IGMP
+        if(IGMP_UP_Time>=2){
+            IGMP_UP_Time=3;
+            igmp_tmr();           //如果有使用组播，250ms也是正常的
+        }
+    #endif    
+#endif
+  //ARP每5s周期性调用一次
+  if ((LWipTime - ARPTimer) >= ARP_TMR_INTERVAL)
+  {
+    ARPTimer =  LWipTime;
+    etharp_tmr();
+    IGMP_UP_Time++;
+    Eth_Link_ITHandler();   //断线重连
+  }
+
+#if LWIP_DHCP //如果使用DHCP的话
+  //每500ms调用一次dhcp_fine_tmr()
+  if (LWipTime - DHCPfineTimer >= DHCP_FINE_TIMER_MSECS)
+  {
+    DHCPfineTimer =  LWipTime;
+    dhcp_fine_tmr();
+  }
+
+  //每60s执行一次DHCP粗糙处理
+  if (LWipTime - DHCPcoarseTimer >= DHCP_COARSE_TIMER_MSECS)
+  {
+    DHCPcoarseTimer =  LWipTime;
+    dhcp_coarse_tmr();
+  }  
+#endif
+
+}
+
+
